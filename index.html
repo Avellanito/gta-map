@@ -101,6 +101,12 @@
     let followMe = true;        // seguir al usuario
     const NAV_ZOOM = 16;        // zoom mientras navegas (ajústalo a tu gusto)
 
+    // --- Long press to pin ---
+    const LONG_PRESS_MS = 600;     // 600ms = pulsación larga
+    let longPressTimer = null;
+    let pinMarker = null;
+    let overlay = null;
+
     function setEstado(txt) {
       const el = document.getElementById("estado");
       if (el) el.textContent = txt;
@@ -108,6 +114,32 @@
 
   function initMap() {
   map = new google.maps.Map(document.getElementById("map"), {
+    // Overlay para convertir coordenadas de pantalla a LatLng (necesario en móvil)
+      overlay = new google.maps.OverlayView();
+      overlay.onAdd = function(){};
+      overlay.draw = function(){};
+      overlay.setMap(map);
+
+// ---- Long press con ratón (PC) ----
+      map.addListener("mousedown", (e) => startLongPress(e.latLng));
+      map.addListener("mouseup", cancelLongPress);
+      map.addListener("drag", cancelLongPress);
+      map.addListener("mouseout", cancelLongPress);
+
+// Click derecho = pin rápido (opcional, útil en PC)
+      map.addListener("rightclick", (e) => handlePinnedPoint(e.latLng));
+
+// ---- Long press con dedo (móvil) ----
+      const mapDiv = map.getDiv();
+
+      mapDiv.addEventListener("touchstart", (ev) => {
+      if (ev.touches.length !== 1) return;
+      const latLng = touchToLatLng(ev.touches[0]);
+      if (latLng) startLongPress(latLng);
+    }, { passive: true });
+
+mapDiv.addEventListener("touchend", cancelLongPress, { passive: true });
+mapDiv.addEventListener("touchmove", cancelLongPress, { passive: true });
     heading: 0,
     tilt: 45,
     center: DEFAULT_CENTER,
@@ -250,6 +282,60 @@ if (!google.maps.places) {
     }
 
 
+    function startLongPress(latLng) {
+  cancelLongPress();
+  longPressTimer = setTimeout(() => {
+    handlePinnedPoint(latLng);
+  }, LONG_PRESS_MS);
+}
+
+function cancelLongPress() {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+}
+
+function touchToLatLng(touch) {
+  // Convierte el punto tocado (pixeles) a LatLng usando el projection del overlay
+  if (!overlay || !overlay.getProjection) return null;
+  const proj = overlay.getProjection();
+  if (!proj) return null;
+
+  const rect = map.getDiv().getBoundingClientRect();
+  const x = touch.clientX - rect.left;
+  const y = touch.clientY - rect.top;
+
+  return proj.fromContainerPixelToLatLng(new google.maps.Point(x, y));
+}
+
+function handlePinnedPoint(latLng) {
+  cancelLongPress();
+
+  // Guardar como destino actual (esto hace que calcularRuta use coordenadas exactas)
+  selectedPlaceLatLng = latLng;
+  currentDestination = latLng;
+  navigating = true;
+
+  // Poner/actualizar marcador
+  if (!pinMarker) {
+    pinMarker = new google.maps.Marker({
+      position: latLng,
+      map,
+      title: "Destino",
+    });
+  } else {
+    pinMarker.setPosition(latLng);
+  }
+
+  // (Opcional) Mostrar coordenadas en el input para que quede claro
+  const inp = document.getElementById("destino");
+  if (inp) inp.value = `Punto: ${latLng.lat().toFixed(5)}, ${latLng.lng().toFixed(5)}`;
+
+  // Calcula ruta hacia el pin
+  calcularRuta(false);
+}
+
     function isOffRoute(userLatLng) {
     // Si no hay ruta dibujada, no podemos saber
       if (!routeLine) return false;
@@ -368,6 +454,7 @@ route.legs.forEach(leg => {
 
 </body>
 </html>
+
 
 
 

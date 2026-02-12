@@ -49,7 +49,7 @@
     const OFF_ROUTE_MIN_SECONDS = 10;
     let lastOffRouteCheckMs = 0;
 
-    const NAV_ZOOM = 16;
+    const NAV_ZOOM = 17;
     let followMe = true;
 
     const LONG_PRESS_MS = 600;
@@ -176,7 +176,7 @@
 
             if (navigating && followMe) {
               map.panTo(latLng);
-              if (map.getZoom() < NAV_ZOOM) map.setZoom(NAV_ZOOM);
+              if (map.getZoom() !== NAV_ZOOM) map.setZoom(NAV_ZOOM);
             }
             if (heading !== null && !isNaN(heading)) {
               map.setHeading(heading);
@@ -340,6 +340,10 @@
           map.fitBounds(bounds);
         }
 
+        if (!silencioso) {
+          map.setZoom(NAV_ZOOM);
+      }
+
         setEstado("Ruta lista 🛣️");
       } catch (err) {
         console.error(err);
@@ -360,6 +364,7 @@
 
 </body>
 </html>
+
 
 
 

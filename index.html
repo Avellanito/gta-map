@@ -106,17 +106,20 @@
       if (el) el.textContent = txt;
     }
 
-    function initMap() {
-      map = new google.maps.Map(document.getElementById("map"), {
-        heading: 0,
-        tilt: 45,
-        center: DEFAULT_CENTER,
-        zoom: 13,
-        mapId: MAP_ID,
-        fullscreenControl: false,
-        mapTypeControl: false,
-        streetViewControl: false
-      });
+  function initMap() {
+  map = new google.maps.Map(document.getElementById("map"), {
+    heading: 0,
+    tilt: 45,
+    center: DEFAULT_CENTER,
+    zoom: 13,
+    mapId: MAP_ID,
+    fullscreenControl: false,
+    mapTypeControl: false,
+    streetViewControl: false
+  });
+}
+
+window.initMap = initMap;
 
       directionsService = new google.maps.DirectionsService();
 
@@ -365,6 +368,7 @@ route.legs.forEach(leg => {
 
 </body>
 </html>
+
 
 
 

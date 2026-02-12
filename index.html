@@ -3,53 +3,29 @@
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Mapa GTA GPS</title>
-
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, Arial, sans-serif; }
     #map { height: 100vh; width: 100vw; }
-
     .bar{
-      position: fixed;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 10;
-      width: min(720px, 92vw);
-      display: flex;
-      gap: 8px;
+      position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 10; width: min(720px, 92vw);
+      display: flex; gap: 8px; align-items: center;
       background: rgba(255,255,255,0.94);
-      padding: 10px;
-      border-radius: 14px;
+      padding: 10px; border-radius: 14px;
       box-shadow: 0 6px 18px rgba(0,0,0,0.25);
-      align-items: center;
     }
     .bar input{
-      flex: 1;
-      padding: 10px 12px;
-      font-size: 16px;
-      border-radius: 10px;
-      border: 1px solid #cfcfcf;
-      outline: none;
+      flex: 1; padding: 10px 12px; font-size: 16px;
+      border-radius: 10px; border: 1px solid #cfcfcf; outline: none;
     }
     .bar button{
-      padding: 10px 14px;
-      font-size: 16px;
-      border-radius: 10px;
-      border: none;
-      background: #111;
-      color: #fff;
-      cursor: pointer;
+      padding: 10px 14px; font-size: 16px; border-radius: 10px;
+      border: none; background: #111; color: #fff; cursor: pointer;
       white-space: nowrap;
     }
-    .bar button:hover{ opacity: .88; }
-
     .chip{
-      font-size: 12px;
-      padding: 6px 10px;
-      border-radius: 999px;
-      background: rgba(0,0,0,0.06);
-      color: #111;
-      white-space: nowrap;
+      font-size: 12px; padding: 6px 10px; border-radius: 999px;
+      background: rgba(0,0,0,0.06); color: #111; white-space: nowrap;
     }
   </style>
 </head>
@@ -67,129 +43,111 @@
   <script>
     // ==== CONFIG ====
     const MAP_ID = "818f2355ad2d42eff8904298";
-    const DEFAULT_CENTER = { lat: 40.4168, lng: -3.7038 }; // Madrid
+    const DEFAULT_CENTER = { lat: 40.4168, lng: -3.7038 };
 
-    // Recalcular ruta si:
-    const REROUTE_MIN_SECONDS = 12;   // mínimo tiempo entre recálculos
-    const REROUTE_MIN_METERS  = 80;   // mínimo desplazamiento para recalcular
-    const OFF_ROUTE_METERS = 45;   // tolerancia: 45 m (GPS en coche suele ir bien)
-    const OFF_ROUTE_MIN_SECONDS = 10; // para no recalcular por ruido del GPS
+    const OFF_ROUTE_METERS = 45;
+    const OFF_ROUTE_MIN_SECONDS = 10;
     let lastOffRouteCheckMs = 0;
 
-    // ==== STATE ====
-    let map;
-    let directionsService;
+    const NAV_ZOOM = 16;
+    let followMe = true;
 
-    let userMarker = null;
+    const LONG_PRESS_MS = 600;
+
+    // ==== STATE ====
+    let map, directionsService, autocomplete;
+    let overlay = null;
+
     let watchId = null;
     let lastUserLatLng = null;
+    let userMarker = null;
 
-    // Ruta estilo GTA (borde negro + línea blanca)
+    let navigating = false;
+    let currentDestination = null;
+    let selectedPlaceLatLng = null;
+
+    let routeRequestInFlight = false;
     let routeOutline = null;
     let routeLine = null;
 
-    // Places autocomplete
-    let autocomplete = null;
-    let selectedPlaceLatLng = null;
-
-    // Navegación / reroute
-    let navigating = false;
-    let currentDestination = null; // puede ser LatLng o string
-    let lastRouteOriginLatLng = null;
-    let lastRouteTimeMs = 0;
-    let routeRequestInFlight = false;
-    let followMe = true;        // seguir al usuario
-    const NAV_ZOOM = 16;        // zoom mientras navegas (ajústalo a tu gusto)
-
-    // --- Long press to pin ---
-    const LONG_PRESS_MS = 600;     // 600ms = pulsación larga
     let longPressTimer = null;
     let pinMarker = null;
-    let overlay = null;
 
     function setEstado(txt) {
       const el = document.getElementById("estado");
       if (el) el.textContent = txt;
     }
 
-function initMap() {
-  map = new google.maps.Map(document.getElementById("map"), {
-    heading: 0,
-    tilt: 45,
-    center: DEFAULT_CENTER,
-    zoom: 13,
-    mapId: MAP_ID,
-    fullscreenControl: false,
-    mapTypeControl: false,
-    streetViewControl: false,
-  });
+    function initMap() {
+      map = new google.maps.Map(document.getElementById("map"), {
+        heading: 0,
+        tilt: 45,
+        center: DEFAULT_CENTER,
+        zoom: 13,
+        mapId: MAP_ID,
+        fullscreenControl: false,
+        mapTypeControl: false,
+        streetViewControl: false
+      });
 
-  // Overlay para convertir pantalla -> LatLng (móvil)
-  overlay = new google.maps.OverlayView();
-  overlay.onAdd = function(){};
-  overlay.draw = function(){};
-  overlay.setMap(map);
+      // Overlay para touch -> LatLng
+      overlay = new google.maps.OverlayView();
+      overlay.onAdd = function(){};
+      overlay.draw = function(){};
+      overlay.setMap(map);
 
-  // ---- Long press con ratón (PC) ----
-  map.addListener("mousedown", (e) => startLongPress(e.latLng));
-  map.addListener("mouseup", cancelLongPress);
-  map.addListener("drag", cancelLongPress);
-  map.addListener("mouseout", cancelLongPress);
-  map.addListener("rightclick", (e) => handlePinnedPoint(e.latLng)); // opcional
+      // Long press ratón
+      map.addListener("mousedown", (e) => startLongPress(e.latLng));
+      map.addListener("mouseup", cancelLongPress);
+      map.addListener("drag", cancelLongPress);
+      map.addListener("mouseout", cancelLongPress);
+      map.addListener("rightclick", (e) => handlePinnedPoint(e.latLng));
 
-  // ---- Long press con dedo (móvil) ----
-  const mapDiv = map.getDiv();
-  mapDiv.addEventListener("touchstart", onTouchStart, { passive: true });
-  mapDiv.addEventListener("touchend", cancelLongPress, { passive: true });
-  mapDiv.addEventListener("touchmove", cancelLongPress, { passive: true });
+      // Long press móvil
+      const mapDiv = map.getDiv();
+      mapDiv.addEventListener("touchstart", onTouchStart, { passive: true });
+      mapDiv.addEventListener("touchend", cancelLongPress, { passive: true });
+      mapDiv.addEventListener("touchmove", cancelLongPress, { passive: true });
 
-  // Directions
-  directionsService = new google.maps.DirectionsService();
+      directionsService = new google.maps.DirectionsService();
 
-  // Autocomplete (Places)
-  if (!google.maps.places) {
-    setEstado("Places no cargó (sin sugerencias)");
-  } else {
-    const input = document.getElementById("destino");
-    autocomplete = new google.maps.places.Autocomplete(input, {
-      fields: ["geometry", "name", "formatted_address"]
-    });
+      // Autocomplete (si places cargó)
+      if (google.maps.places) {
+        const input = document.getElementById("destino");
+        autocomplete = new google.maps.places.Autocomplete(input, {
+          fields: ["geometry", "name", "formatted_address"]
+        });
 
-    autocomplete.addListener("place_changed", () => {
-      const place = autocomplete.getPlace();
-      if (place?.geometry?.location) {
-        selectedPlaceLatLng = place.geometry.location;
-        setEstado("Destino listo ✅");
+        autocomplete.addListener("place_changed", () => {
+          const place = autocomplete.getPlace();
+          if (place?.geometry?.location) {
+            selectedPlaceLatLng = place.geometry.location;
+            setEstado("Destino listo ✅");
+          } else {
+            selectedPlaceLatLng = null;
+            setEstado("Elige un destino de la lista");
+          }
+        });
       } else {
-        selectedPlaceLatLng = null;
-        setEstado("Elige un destino de la lista");
+        setEstado("Places no cargó (sin sugerencias)");
       }
-    });
-  }
 
-  document.getElementById("btnIr").addEventListener("click", () => calcularRuta(false));
-  document.getElementById("btnCentrar").addEventListener("click", () => {
-    if (lastUserLatLng) {
-      map.panTo(lastUserLatLng);
-      map.setZoom(16);
-    } else {
-      setEstado("Sin ubicación todavía");
+      document.getElementById("btnIr").addEventListener("click", () => calcularRuta(false));
+      document.getElementById("btnCentrar").addEventListener("click", () => {
+        if (lastUserLatLng) {
+          map.panTo(lastUserLatLng);
+          map.setZoom(NAV_ZOOM);
+        }
+      });
+
+      iniciarSeguimiento();
+      setEstado("Mapa cargado ✅");
     }
-  });
-
-  iniciarSeguimiento();
-  setEstado("Mapa cargado ✅");
-}
-window.initMap = initMap;
+    window.initMap = initMap;
 
     function iniciarSeguimiento() {
-      if (!navigator.geolocation) {
-        setEstado("Geolocalización no disponible");
-        return;
-      }
+      if (!navigator.geolocation) { setEstado("Geolocalización no disponible"); return; }
       if (watchId !== null) return;
-
-      setEstado("Pidiendo ubicación…");
 
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
@@ -197,7 +155,6 @@ window.initMap = initMap;
           const heading = pos.coords.heading;
           lastUserLatLng = latLng;
 
-          // Marcador usuario
           if (!userMarker) {
             userMarker = new google.maps.Marker({
               position: latLng,
@@ -213,13 +170,14 @@ window.initMap = initMap;
               }
             });
             map.setCenter(latLng);
-            map.setZoom(15);
+            map.setZoom(NAV_ZOOM);
           } else {
             userMarker.setPosition(latLng);
+
             if (navigating && followMe) {
               map.panTo(latLng);
               if (map.getZoom() < NAV_ZOOM) map.setZoom(NAV_ZOOM);
-            } 
+            }
             if (heading !== null && !isNaN(heading)) {
               map.setHeading(heading);
             }
@@ -227,25 +185,21 @@ window.initMap = initMap;
 
           setEstado(navigating ? "Navegando…" : "Ubicación OK");
 
-       // ==== RECÁLCULO SOLO SI TE SALES DE LA RUTA ====
+          // Recalcular SOLO si te sales de la ruta
           if (navigating && currentDestination && routeLine && !routeRequestInFlight) {
             const now = Date.now();
             const secondsSince = (now - lastOffRouteCheckMs) / 1000;
 
-          if (secondsSince >= OFF_ROUTE_MIN_SECONDS) {
-            lastOffRouteCheckMs = now;
-
-          if (isOffRoute(latLng)) {
-      // recalcula en modo silencioso (no re-encuadra cámara)
-          calcularRuta(true);
-              }
+            if (secondsSince >= OFF_ROUTE_MIN_SECONDS) {
+              lastOffRouteCheckMs = now;
+              if (isOffRoute(latLng)) calcularRuta(true);
             }
           }
         },
         (err) => {
           console.error(err);
           setEstado("Activa ubicación (GPS)");
-          alert("Necesito permiso de ubicación para seguirte en tiempo real.");
+          alert("Necesito permiso de ubicación.");
         },
         { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
       );
@@ -258,18 +212,23 @@ window.initMap = initMap;
       routeLine = null;
     }
 
-    // Distancia (Haversine) sin librerías extra
     function distanceMeters(a, b) {
       const R = 6371000;
       const lat1 = a.lat() * Math.PI / 180;
       const lat2 = b.lat() * Math.PI / 180;
       const dLat = lat2 - lat1;
       const dLng = (b.lng() - a.lng()) * Math.PI / 180;
-
       const s1 = Math.sin(dLat / 2);
       const s2 = Math.sin(dLng / 2);
       const h = s1*s1 + Math.cos(lat1) * Math.cos(lat2) * s2*s2;
       return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+    }
+
+    function isOffRoute(userLatLng) {
+      if (!routeLine || !google.maps.geometry?.poly) return false;
+      const toleranceDegrees = OFF_ROUTE_METERS / 111320;
+      const onEdge = google.maps.geometry.poly.isLocationOnEdge(userLatLng, routeLine, toleranceDegrees);
+      return !onEdge;
     }
 
     function onTouchStart(ev) {
@@ -279,100 +238,65 @@ window.initMap = initMap;
     }
 
     function startLongPress(latLng) {
-  cancelLongPress();
-  longPressTimer = setTimeout(() => {
-    handlePinnedPoint(latLng);
-  }, LONG_PRESS_MS);
-}
+      cancelLongPress();
+      longPressTimer = setTimeout(() => handlePinnedPoint(latLng), LONG_PRESS_MS);
+    }
 
-function cancelLongPress() {
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
-  }
-}
+    function cancelLongPress() {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    }
 
-function touchToLatLng(touch) {
-  // Convierte el punto tocado (pixeles) a LatLng usando el projection del overlay
-  if (!overlay || !overlay.getProjection) return null;
-  const proj = overlay.getProjection();
-  if (!proj) return null;
+    function touchToLatLng(touch) {
+      if (!overlay) return null;
+      const proj = overlay.getProjection && overlay.getProjection();
+      if (!proj) return null;
 
-  const rect = map.getDiv().getBoundingClientRect();
-  const x = touch.clientX - rect.left;
-  const y = touch.clientY - rect.top;
+      const rect = map.getDiv().getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
 
-  return proj.fromContainerPixelToLatLng(new google.maps.Point(x, y));
-}
+      return proj.fromContainerPixelToLatLng(new google.maps.Point(x, y));
+    }
 
-function handlePinnedPoint(latLng) {
-  cancelLongPress();
+    function handlePinnedPoint(latLng) {
+      cancelLongPress();
 
-  // Guardar como destino actual (esto hace que calcularRuta use coordenadas exactas)
-  selectedPlaceLatLng = latLng;
-  currentDestination = latLng;
-  navigating = true;
+      selectedPlaceLatLng = latLng;
+      currentDestination = latLng;
+      navigating = true;
 
-  // Poner/actualizar marcador
-  if (!pinMarker) {
-    pinMarker = new google.maps.Marker({
-      position: latLng,
-      map,
-      title: "Destino",
-    });
-  } else {
-    pinMarker.setPosition(latLng);
-  }
+      if (!pinMarker) {
+        pinMarker = new google.maps.Marker({ position: latLng, map, title: "Destino" });
+      } else {
+        pinMarker.setPosition(latLng);
+      }
 
-  // (Opcional) Mostrar coordenadas en el input para que quede claro
-  const inp = document.getElementById("destino");
-  if (inp) inp.value = `Punto: ${latLng.lat().toFixed(5)}, ${latLng.lng().toFixed(5)}`;
+      const inp = document.getElementById("destino");
+      if (inp) inp.value = `Punto: ${latLng.lat().toFixed(5)}, ${latLng.lng().toFixed(5)}`;
 
-  // Calcula ruta hacia el pin
-  calcularRuta(false);
-}
-
-    function isOffRoute(userLatLng) {
-    // Si no hay ruta dibujada, no podemos saber
-      if (!routeLine) return false;
-
-      // google.maps.geometry.poly.isLocationOnEdge usa tolerancia en "grados"
-      // Aproximación: 1 grado ~ 111,320 metros (latitud). Para tolerancias pequeñas vale perfecto.
-      const toleranceDegrees = OFF_ROUTE_METERS / 111320;
-
-      // Devuelve TRUE si estás "sobre" la línea (con tolerancia). Nosotros queremos lo contrario.
-      const onEdge = google.maps.geometry.poly.isLocationOnEdge(
-      userLatLng,
-      routeLine,
-      toleranceDegrees
-      );
-
-      return !onEdge;
+      calcularRuta(false);
     }
 
     async function calcularRuta(silencioso) {
       if (!lastUserLatLng) {
-        setEstado("Esperando tu ubicación…");
-        if (!silencioso) alert("Aún no tengo tu ubicación. Acepta permisos de GPS y espera 1-2 segundos.");
+        if (!silencioso) alert("Aún no tengo tu ubicación.");
         return;
       }
 
       const destinoInput = document.getElementById("destino").value.trim();
       if (!destinoInput && !selectedPlaceLatLng) {
-        setEstado("Escribe un destino");
         if (!silencioso) alert("Escribe un destino primero 🙂");
         return;
       }
 
-      // Definimos destino actual (se mantiene para reroute)
       currentDestination = selectedPlaceLatLng ? selectedPlaceLatLng : destinoInput;
       navigating = true;
 
-      // Evitar peticiones simultáneas
       if (routeRequestInFlight) return;
       routeRequestInFlight = true;
-
-      setEstado(silencioso ? "Recalculando…" : "Calculando ruta…");
 
       try {
         const res = await directionsService.route({
@@ -381,49 +305,35 @@ function handlePinnedPoint(latLng) {
           travelMode: google.maps.TravelMode.DRIVING
         });
 
-       const route = res.routes?.[0];
-if (!route) throw new Error("No route");
+        const route = res.routes?.[0];
+        if (!route) throw new Error("No route");
 
-const path = [];
-route.legs.forEach(leg => {
-  leg.steps.forEach(step => {
-    step.path.forEach(p => path.push(p));
-  });
-});
-        if (!path || path.length === 0) {
-          setEstado("Sin ruta");
-          if (!silencioso) alert("No encontré una ruta. Prueba con otro destino.");
-          navigating = false;
-          routeRequestInFlight = false;
-          return;
-        }
+        // Path detallado pegado a carretera
+        const path = [];
+        route.legs.forEach(leg => leg.steps.forEach(step => step.path.forEach(p => path.push(p))));
 
-        // Guardamos “punto de referencia” para saber cuánto te has movido
-        lastRouteOriginLatLng = lastUserLatLng;
-        lastRouteTimeMs = Date.now();
+        if (!path.length) throw new Error("Empty path");
 
-        // Redibujamos ruta estilo GTA
         limpiarRuta();
 
+        // Borde
         routeOutline = new google.maps.Polyline({
-          path,
-          map,
-          strokeColor: "#800E82",
+          path, map,
+          strokeColor: "#000000",
           strokeOpacity: 1,
-          strokeWeight: 5,
+          strokeWeight: 9,
           zIndex: 1
         });
 
+        // Línea morada
         routeLine = new google.maps.Polyline({
-          path,
-          map,
+          path, map,
           strokeColor: "#800E82",
           strokeOpacity: 1,
-          strokeWeight: 3,
+          strokeWeight: 5,
           zIndex: 2
         });
 
-        // Ajuste de cámara solo cuando NO es silencioso (para que no maree mientras conduces)
         if (!silencioso) {
           const bounds = new google.maps.LatLngBounds();
           path.forEach(p => bounds.extend(p));
@@ -434,12 +344,13 @@ route.legs.forEach(leg => {
       } catch (err) {
         console.error(err);
         setEstado("Error ruta");
-        if (!silencioso) alert("No pude calcular la ruta. Prueba eligiendo un destino de la lista.");
+        if (!silencioso) alert("No pude calcular la ruta.");
       } finally {
         routeRequestInFlight = false;
       }
     }
   </script>
+
 
   <!-- IMPORTANTE: libraries=places para Autocomplete -->
 <script
@@ -449,6 +360,7 @@ route.legs.forEach(leg => {
 
 </body>
 </html>
+
 
 
 

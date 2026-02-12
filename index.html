@@ -135,9 +135,7 @@ function initMap() {
   map.addListener("mouseup", cancelLongPress);
   map.addListener("drag", cancelLongPress);
   map.addListener("mouseout", cancelLongPress);
-
-  // Click derecho = pin rápido (PC)
-  map.addListener("rightclick", (e) => handlePinnedPoint(e.latLng));
+  map.addListener("rightclick", (e) => handlePinnedPoint(e.latLng)); // opcional
 
   // ---- Long press con dedo (móvil) ----
   const mapDiv = map.getDiv();
@@ -145,47 +143,44 @@ function initMap() {
   mapDiv.addEventListener("touchend", cancelLongPress, { passive: true });
   mapDiv.addEventListener("touchmove", cancelLongPress, { passive: true });
 
-  // (si tienes aquí directionsService / autocomplete / listeners de botones, déjalos como estaban)
+  // Directions
+  directionsService = new google.maps.DirectionsService();
+
+  // Autocomplete (Places)
+  if (!google.maps.places) {
+    setEstado("Places no cargó (sin sugerencias)");
+  } else {
+    const input = document.getElementById("destino");
+    autocomplete = new google.maps.places.Autocomplete(input, {
+      fields: ["geometry", "name", "formatted_address"]
+    });
+
+    autocomplete.addListener("place_changed", () => {
+      const place = autocomplete.getPlace();
+      if (place?.geometry?.location) {
+        selectedPlaceLatLng = place.geometry.location;
+        setEstado("Destino listo ✅");
+      } else {
+        selectedPlaceLatLng = null;
+        setEstado("Elige un destino de la lista");
+      }
+    });
+  }
+
+  document.getElementById("btnIr").addEventListener("click", () => calcularRuta(false));
+  document.getElementById("btnCentrar").addEventListener("click", () => {
+    if (lastUserLatLng) {
+      map.panTo(lastUserLatLng);
+      map.setZoom(16);
+    } else {
+      setEstado("Sin ubicación todavía");
+    }
+  });
+
+  iniciarSeguimiento();
+  setEstado("Mapa cargado ✅");
 }
 window.initMap = initMap;
-
-      directionsService = new google.maps.DirectionsService();
-
-      // Autocomplete (Places)
-      const input = document.getElementById("destino");
-      autocomplete = new google.maps.places.Autocomplete(input, {
-        fields: ["geometry", "name", "formatted_address"]
-        // componentRestrictions: { country: "es" }
-      });
-if (!google.maps.places) {
-  setEstado("Places no cargó (sigue funcionando sin sugerencias)");
-  return; // sin autocompletar, pero el resto sigue
-}
-      autocomplete.addListener("place_changed", () => {
-        const place = autocomplete.getPlace();
-        if (place?.geometry?.location) {
-          selectedPlaceLatLng = place.geometry.location;
-          setEstado("Destino listo ✅");
-        } else {
-          selectedPlaceLatLng = null;
-          setEstado("Elige un destino de la lista");
-        }
-      });
-
-      document.getElementById("btnIr").addEventListener("click", () => calcularRuta(false));
-      document.getElementById("btnCentrar").addEventListener("click", () => {
-        if (lastUserLatLng) {
-          map.panTo(lastUserLatLng);
-          map.setZoom(16);
-        } else {
-          setEstado("Sin ubicación todavía");
-        }
-      });
-
-      iniciarSeguimiento();
-      setEstado("Mapa cargado ✅");
-    
-    window.initMap = initMap;
 
     function iniciarSeguimiento() {
       if (!navigator.geolocation) {
@@ -277,6 +272,11 @@ if (!google.maps.places) {
       return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
     }
 
+    function onTouchStart(ev) {
+      if (!ev.touches || ev.touches.length !== 1) return;
+      const latLng = touchToLatLng(ev.touches[0]);
+      if (latLng) startLongPress(latLng);
+    }
 
     function startLongPress(latLng) {
   cancelLongPress();
@@ -445,11 +445,11 @@ route.legs.forEach(leg => {
 <script
   src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDpS3k1OJAASoGL1IRb9LjKW6gjaHe5fyw&callback=initMap&v=weekly&libraries=places,geometry"
   defer
-  defer
 ></script>
 
 </body>
 </html>
+
 
 
 

@@ -105,6 +105,8 @@
 
     function initMap() {
       map = new google.maps.Map(document.getElementById("map"), {
+        heading: 0,
+        tilt: 45
         center: DEFAULT_CENTER,
         zoom: 13,
         mapId: MAP_ID,
@@ -163,6 +165,7 @@ if (!google.maps.places) {
       watchId = navigator.geolocation.watchPosition(
         (pos) => {
           const latLng = new google.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+          const heading = pos.coords.heading;
           lastUserLatLng = latLng;
 
           // Marcador usuario
@@ -185,9 +188,12 @@ if (!google.maps.places) {
           } else {
             userMarker.setPosition(latLng);
             if (navigating && followMe) {
-  map.panTo(latLng);
-  if (map.getZoom() < NAV_ZOOM) map.setZoom(NAV_ZOOM);
-            }  
+              map.panTo(latLng);
+              if (map.getZoom() < NAV_ZOOM) map.setZoom(NAV_ZOOM);
+            } 
+            if (heading !== null && !isNaN(heading)) {
+              map.setHeading(heading);
+            }
           }
 
           setEstado(navigating ? "Navegando…" : "Ubicación OK");
@@ -334,6 +340,7 @@ route.legs.forEach(leg => {
 
 </body>
 </html>
+
 
 
 

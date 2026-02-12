@@ -69,6 +69,10 @@
     const MAP_ID = "818f2355ad2d42eff8904298";
     const DEFAULT_CENTER = { lat: 40.4168, lng: -3.7038 }; // Madrid
 
+    // Recalcular ruta si:
+    const REROUTE_MIN_SECONDS = 12;   // mínimo tiempo entre recálculos
+    const REROUTE_MIN_METERS  = 80;   // mínimo desplazamiento para recalcular
+
     // ==== STATE ====
     let map;
     let directionsService;
@@ -84,6 +88,13 @@
     // Places autocomplete
     let autocomplete = null;
     let selectedPlaceLatLng = null;
+
+    // Navegación / reroute
+    let navigating = false;
+    let currentDestination = null; // puede ser LatLng o string
+    let lastRouteOriginLatLng = null;
+    let lastRouteTimeMs = 0;
+    let routeRequestInFlight = false;
 
     function setEstado(txt) {
       const el = document.getElementById("estado");
@@ -105,9 +116,10 @@
       // Autocomplete (Places)
       const input = document.getElementById("destino");
       autocomplete = new google.maps.places.Autocomplete(input, {
-        fields: ["geometry", "name", "formatted_address"],
-        // componentRestrictions: { country: "es" } // si quieres limitar a España
+        fields: ["geometry", "name", "formatted_address"]
+        // componentRestrictions: { country: "es" }
       });
+
       autocomplete.addListener("place_changed", () => {
         const place = autocomplete.getPlace();
         if (place?.geometry?.location) {
@@ -119,8 +131,7 @@
         }
       });
 
-      // Botones
-      document.getElementById("btnIr").addEventListener("click", calcularRuta);
+      document.getElementById("btnIr").addEventListener("click", () => calcularRuta(false));
       document.getElementById("btnCentrar").addEventListener("click", () => {
         if (lastUserLatLng) {
           map.panTo(lastUserLatLng);
@@ -130,9 +141,7 @@
         }
       });
 
-      // Empezar a seguir tu ubicación en tiempo real
       iniciarSeguimiento();
-
       setEstado("Mapa cargado ✅");
     }
     window.initMap = initMap;
@@ -142,8 +151,6 @@
         setEstado("Geolocalización no disponible");
         return;
       }
-
-      // Si ya hay un watch, no lo dupliques
       if (watchId !== null) return;
 
       setEstado("Pidiendo ubicación…");
@@ -153,7 +160,7 @@
           const latLng = new google.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
           lastUserLatLng = latLng;
 
-          // Crear o mover marcador del usuario
+          // Marcador usuario
           if (!userMarker) {
             userMarker = new google.maps.Marker({
               position: latLng,
@@ -174,10 +181,20 @@
             userMarker.setPosition(latLng);
           }
 
-          // Si estás navegando (hay ruta), podemos recalcular si te alejas mucho (opcional)
-          // Para no gastar de más, lo dejamos manual por ahora.
+          setEstado(navigating ? "Navegando…" : "Ubicación OK");
 
-          setEstado("Ubicación OK");
+          // ==== RECÁLCULO AUTOMÁTICO ====
+          if (navigating && currentDestination && lastRouteOriginLatLng) {
+            const moved = distanceMeters(lastUserLatLng, lastRouteOriginLatLng);
+            const secondsSince = (Date.now() - lastRouteTimeMs) / 1000;
+
+            if (!routeRequestInFlight &&
+                moved >= REROUTE_MIN_METERS &&
+                secondsSince >= REROUTE_MIN_SECONDS) {
+              // Recalcula sin alerts (silencioso)
+              calcularRuta(true);
+            }
+          }
         },
         (err) => {
           console.error(err);
@@ -195,43 +212,67 @@
       routeLine = null;
     }
 
-    async function calcularRuta() {
-      // Origen: tu ubicación actual
+    // Distancia (Haversine) sin librerías extra
+    function distanceMeters(a, b) {
+      const R = 6371000;
+      const lat1 = a.lat() * Math.PI / 180;
+      const lat2 = b.lat() * Math.PI / 180;
+      const dLat = lat2 - lat1;
+      const dLng = (b.lng() - a.lng()) * Math.PI / 180;
+
+      const s1 = Math.sin(dLat / 2);
+      const s2 = Math.sin(dLng / 2);
+      const h = s1*s1 + Math.cos(lat1) * Math.cos(lat2) * s2*s2;
+      return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+    }
+
+    async function calcularRuta(silencioso) {
       if (!lastUserLatLng) {
         setEstado("Esperando tu ubicación…");
-        alert("Aún no tengo tu ubicación. Acepta permisos de GPS y espera 1-2 segundos.");
+        if (!silencioso) alert("Aún no tengo tu ubicación. Acepta permisos de GPS y espera 1-2 segundos.");
         return;
       }
 
-      // Destino: si elegiste de la lista, usamos coordenadas. Si no, usamos texto.
       const destinoInput = document.getElementById("destino").value.trim();
-      if (!destinoInput) {
+      if (!destinoInput && !selectedPlaceLatLng) {
         setEstado("Escribe un destino");
-        alert("Escribe un destino primero 🙂");
+        if (!silencioso) alert("Escribe un destino primero 🙂");
         return;
       }
 
-      const destination = selectedPlaceLatLng ? selectedPlaceLatLng : destinoInput;
+      // Definimos destino actual (se mantiene para reroute)
+      currentDestination = selectedPlaceLatLng ? selectedPlaceLatLng : destinoInput;
+      navigating = true;
 
-      setEstado("Calculando ruta…");
-      limpiarRuta();
+      // Evitar peticiones simultáneas
+      if (routeRequestInFlight) return;
+      routeRequestInFlight = true;
+
+      setEstado(silencioso ? "Recalculando…" : "Calculando ruta…");
 
       try {
         const res = await directionsService.route({
           origin: lastUserLatLng,
-          destination,
+          destination: currentDestination,
           travelMode: google.maps.TravelMode.DRIVING
         });
 
-        // Dibujar nuestra polilínea estilo GTA
         const path = res.routes?.[0]?.overview_path;
         if (!path || path.length === 0) {
           setEstado("Sin ruta");
-          alert("No encontré una ruta. Prueba con otro destino.");
+          if (!silencioso) alert("No encontré una ruta. Prueba con otro destino.");
+          navigating = false;
+          routeRequestInFlight = false;
           return;
         }
 
-        // Borde negro (más ancho)
+        // Guardamos “punto de referencia” para saber cuánto te has movido
+        lastRouteOriginLatLng = lastUserLatLng;
+        lastRouteTimeMs = Date.now();
+
+        // Redibujamos ruta estilo GTA
+        limpiarRuta();
+
         routeOutline = new google.maps.Polyline({
           path,
           map,
@@ -241,7 +282,6 @@
           zIndex: 1
         });
 
-        // Línea blanca encima (más fina)
         routeLine = new google.maps.Polyline({
           path,
           map,
@@ -251,28 +291,25 @@
           zIndex: 2
         });
 
-        // Ajustar cámara a la ruta
-        const bounds = new google.maps.LatLngBounds();
-        path.forEach(p => bounds.extend(p));
-        map.fitBounds(bounds);
+        // Ajuste de cámara solo cuando NO es silencioso (para que no maree mientras conduces)
+        if (!silencioso) {
+          const bounds = new google.maps.LatLngBounds();
+          path.forEach(p => bounds.extend(p));
+          map.fitBounds(bounds);
+        }
 
         setEstado("Ruta lista 🛣️");
       } catch (err) {
         console.error(err);
         setEstado("Error ruta");
-        alert("No pude calcular la ruta. Prueba eligiendo un destino de la lista.");
+        if (!silencioso) alert("No pude calcular la ruta. Prueba eligiendo un destino de la lista.");
+      } finally {
+        routeRequestInFlight = false;
       }
     }
   </script>
 
   <!-- IMPORTANTE: libraries=places para Autocomplete -->
-  <script
-    src="https://maps.googleapis.com/maps/api/js?key=TU_API_KEY_AQUI&callback=initMap&v=weekly&libraries=places"
-    defer
-  ></script>
-</body>
-</html>
-
 <script
   src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDpS3k1OJAASoGL1IRb9LjKW6gjaHe5fyw&callback=initMap&v=weekly"
   defer>
@@ -280,6 +317,7 @@
 
 </body>
 </html>
+
 
 
 

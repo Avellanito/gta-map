@@ -95,6 +95,8 @@
     let lastRouteOriginLatLng = null;
     let lastRouteTimeMs = 0;
     let routeRequestInFlight = false;
+    let followMe = true;        // seguir al usuario
+    const NAV_ZOOM = 16;        // zoom mientras navegas (ajústalo a tu gusto)
 
     function setEstado(txt) {
       const el = document.getElementById("estado");
@@ -182,6 +184,10 @@ if (!google.maps.places) {
             map.setZoom(15);
           } else {
             userMarker.setPosition(latLng);
+            if (navigating && followMe) {
+  map.panTo(latLng);
+  if (map.getZoom() < NAV_ZOOM) map.setZoom(NAV_ZOOM);
+            }  
           }
 
           setEstado(navigating ? "Navegando…" : "Ubicación OK");
@@ -328,6 +334,7 @@ route.legs.forEach(leg => {
 
 </body>
 </html>
+
 
 
 

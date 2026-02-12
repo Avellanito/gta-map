@@ -2,67 +2,114 @@
 <html>
   <head>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <style>
-      html, body { height: 100%; margin: 0; padding: 0; }
-      #map { height: 100%; width: 100%; }
-    </style>
     <title>Mi mapa estilo GTA</title>
+    <style>
+      html, body { height: 100%; margin: 0; }
+      #map { height: 100vh; width: 100vw; } /* clave: 100vh */
+      .bar {
+        position: fixed;
+        top: 0; left: 0;
+        z-index: 10;
+        width: 100%;
+        padding: 10px;
+        background: rgba(255,255,255,0.92);
+        box-sizing: border-box;
+        display: flex;
+        gap: 8px;
+      }
+      .bar input {
+        flex: 1;
+        padding: 10px;
+        font-size: 16px;
+      }
+      .bar button {
+        padding: 10px 14px;
+        font-size: 16px;
+      }
+    </style>
   </head>
+
   <body>
-    <div style="position:absolute; z-index:5; width:100%; padding:10px;">
-  <input id="destino" type="text" placeholder="Escribe tu destino"
-    style="width:70%; padding:10px; font-size:16px;">
-  <button onclick="calcularRuta()"
-    style="padding:10px; font-size:16px;">Ir</button>
-</div>
+    <div class="bar">
+      <input id="destino" type="text" placeholder="Escribe tu destino (ej: Plaza España, Madrid)" />
+      <button id="btnIr" type="button">Ir</button>
+    </div>
 
     <div id="map"></div>
 
-   <script>
-  let map;
-  let directionsService;
-  let directionsRenderer;
+    <script>
+      let map, directionsService, directionsRenderer;
 
-  function initMap() {
-    map = new google.maps.Map(document.getElementById("map"), {
-      center: { lat: 40.4168, lng: -3.7038 },
-      zoom: 13,
-      mapId: "818f2355ad2d42eff8904298"
-    });
+      function initMap() {
+        map = new google.maps.Map(document.getElementById("map"), {
+          center: { lat: 40.4168, lng: -3.7038 },
+          zoom: 13,
+          mapId: "818f2355ad2d42eff8904298",
+          fullscreenControl: false,
+          mapTypeControl: false,
+          streetViewControl: false
+        });
 
-    directionsService = new google.maps.DirectionsService();
-    directionsRenderer = new google.maps.DirectionsRenderer({
-      map: map
-    });
-  }
+        directionsService = new google.maps.DirectionsService();
+        directionsRenderer = new google.maps.DirectionsRenderer({
+          map,
+          suppressMarkers: false
+        });
 
-  function calcularRuta() {
-    const destino = document.getElementById("destino").value;
+        document.getElementById("btnIr").addEventListener("click", calcularRuta);
 
-    navigator.geolocation.getCurrentPosition(position => {
-      const origen = {
-        lat: position.coords.latitude,
-        lng: position.coords.longitude
-      };
+        // Centrar en tu ubicación al abrir (opcional pero útil)
+        if (navigator.geolocation) {
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              const yo = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+              map.setCenter(yo);
+              map.setZoom(14);
+            },
+            () => { /* si deniega, no pasa nada */ },
+            { enableHighAccuracy: true, timeout: 8000 }
+          );
+        }
+      }
+      window.initMap = initMap;
 
-      directionsService.route({
-        origin: origen,
-        destination: destino,
-        travelMode: google.maps.TravelMode.DRIVING
-      }).then(response => {
-        directionsRenderer.setDirections(response);
-      });
-    });
-  }
+      function calcularRuta() {
+        const destino = document.getElementById("destino").value.trim();
+        if (!destino) return alert("Escribe un destino primero 🙂");
 
-  window.initMap = initMap;
-</script>
+        if (!navigator.geolocation) {
+          return alert("Tu navegador no permite geolocalización.");
+        }
 
+        navigator.geolocation.getCurrentPosition(
+          (pos) => {
+            const origen = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+
+            directionsService.route({
+              origin: origen,
+              destination: destino,
+              travelMode: google.maps.TravelMode.DRIVING
+            }).then((response) => {
+              directionsRenderer.setDirections(response);
+            }).catch((err) => {
+              console.error(err);
+              alert("No pude calcular la ruta. Prueba con un destino más específico.");
+            });
+          },
+          (err) => {
+            console.error(err);
+            alert("No tengo permiso de ubicación. Actívalo para usar GPS.");
+          },
+          { enableHighAccuracy: true, timeout: 10000 }
+        );
+      }
+    </script>
+
+    <script
+      src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDpS3k1OJAASoGL1IRb9LjKW6gjaHe5fyw&callback=initMap&v=weekly"
+      defer
+    ></script>
   </body>
-
 </html>
-
-
-
 
 

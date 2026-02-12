@@ -112,34 +112,8 @@
       if (el) el.textContent = txt;
     }
 
-  function initMap() {
+function initMap() {
   map = new google.maps.Map(document.getElementById("map"), {
-    // Overlay para convertir coordenadas de pantalla a LatLng (necesario en móvil)
-      overlay = new google.maps.OverlayView();
-      overlay.onAdd = function(){};
-      overlay.draw = function(){};
-      overlay.setMap(map);
-
-// ---- Long press con ratón (PC) ----
-      map.addListener("mousedown", (e) => startLongPress(e.latLng));
-      map.addListener("mouseup", cancelLongPress);
-      map.addListener("drag", cancelLongPress);
-      map.addListener("mouseout", cancelLongPress);
-
-// Click derecho = pin rápido (opcional, útil en PC)
-      map.addListener("rightclick", (e) => handlePinnedPoint(e.latLng));
-
-// ---- Long press con dedo (móvil) ----
-      const mapDiv = map.getDiv();
-
-      mapDiv.addEventListener("touchstart", (ev) => {
-      if (ev.touches.length !== 1) return;
-      const latLng = touchToLatLng(ev.touches[0]);
-      if (latLng) startLongPress(latLng);
-    }, { passive: true });
-
-mapDiv.addEventListener("touchend", cancelLongPress, { passive: true });
-mapDiv.addEventListener("touchmove", cancelLongPress, { passive: true });
     heading: 0,
     tilt: 45,
     center: DEFAULT_CENTER,
@@ -149,8 +123,30 @@ mapDiv.addEventListener("touchmove", cancelLongPress, { passive: true });
     mapTypeControl: false,
     streetViewControl: false
   });
-}
 
+  // Overlay para convertir pantalla -> LatLng (móvil)
+  overlay = new google.maps.OverlayView();
+  overlay.onAdd = function(){};
+  overlay.draw = function(){};
+  overlay.setMap(map);
+
+  // ---- Long press con ratón (PC) ----
+  map.addListener("mousedown", (e) => startLongPress(e.latLng));
+  map.addListener("mouseup", cancelLongPress);
+  map.addListener("drag", cancelLongPress);
+  map.addListener("mouseout", cancelLongPress);
+
+  // Click derecho = pin rápido (PC)
+  map.addListener("rightclick", (e) => handlePinnedPoint(e.latLng));
+
+  // ---- Long press con dedo (móvil) ----
+  const mapDiv = map.getDiv();
+  mapDiv.addEventListener("touchstart", onTouchStart, { passive: true });
+  mapDiv.addEventListener("touchend", cancelLongPress, { passive: true });
+  mapDiv.addEventListener("touchmove", cancelLongPress, { passive: true });
+
+  // (si tienes aquí directionsService / autocomplete / listeners de botones, déjalos como estaban)
+}
 window.initMap = initMap;
 
       directionsService = new google.maps.DirectionsService();
@@ -454,6 +450,7 @@ route.legs.forEach(leg => {
 
 </body>
 </html>
+
 
 
 

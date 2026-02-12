@@ -260,7 +260,15 @@ if (!google.maps.places) {
           travelMode: google.maps.TravelMode.DRIVING
         });
 
-        const path = res.routes?.[0]?.overview_path;
+       const route = res.routes?.[0];
+if (!route) throw new Error("No route");
+
+const path = [];
+route.legs.forEach(leg => {
+  leg.steps.forEach(step => {
+    step.path.forEach(p => path.push(p));
+  });
+});
         if (!path || path.length === 0) {
           setEstado("Sin ruta");
           if (!silencioso) alert("No encontré una ruta. Prueba con otro destino.");
@@ -320,6 +328,7 @@ if (!google.maps.places) {
 
 </body>
 </html>
+
 
 
 

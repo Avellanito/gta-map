@@ -72,6 +72,9 @@
     // Recalcular ruta si:
     const REROUTE_MIN_SECONDS = 12;   // mínimo tiempo entre recálculos
     const REROUTE_MIN_METERS  = 80;   // mínimo desplazamiento para recalcular
+    const OFF_ROUTE_METERS = 45;   // tolerancia: 45 m (GPS en coche suele ir bien)
+    const OFF_ROUTE_MIN_SECONDS = 10; // para no recalcular por ruido del GPS
+    let lastOffRouteCheckMs = 0;
 
     // ==== STATE ====
     let map;
@@ -198,16 +201,18 @@ if (!google.maps.places) {
 
           setEstado(navigating ? "Navegando…" : "Ubicación OK");
 
-          // ==== RECÁLCULO AUTOMÁTICO ====
-          if (navigating && currentDestination && lastRouteOriginLatLng) {
-            const moved = distanceMeters(lastUserLatLng, lastRouteOriginLatLng);
-            const secondsSince = (Date.now() - lastRouteTimeMs) / 1000;
+       // ==== RECÁLCULO SOLO SI TE SALES DE LA RUTA ====
+          if (navigating && currentDestination && routeLine && !routeRequestInFlight) {
+            const now = Date.now();
+            const secondsSince = (now - lastOffRouteCheckMs) / 1000;
 
-            if (!routeRequestInFlight &&
-                moved >= REROUTE_MIN_METERS &&
-                secondsSince >= REROUTE_MIN_SECONDS) {
-              // Recalcula sin alerts (silencioso)
-              calcularRuta(true);
+          if (secondsSince >= OFF_ROUTE_MIN_SECONDS) {
+            lastOffRouteCheckMs = now;
+
+          if (isOffRoute(latLng)) {
+      // recalcula en modo silencioso (no re-encuadra cámara)
+          calcularRuta(true);
+              }
             }
           }
         },
@@ -239,6 +244,25 @@ if (!google.maps.places) {
       const s2 = Math.sin(dLng / 2);
       const h = s1*s1 + Math.cos(lat1) * Math.cos(lat2) * s2*s2;
       return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+    }
+
+
+    function isOffRoute(userLatLng) {
+    // Si no hay ruta dibujada, no podemos saber
+      if (!routeLine) return false;
+
+      // google.maps.geometry.poly.isLocationOnEdge usa tolerancia en "grados"
+      // Aproximación: 1 grado ~ 111,320 metros (latitud). Para tolerancias pequeñas vale perfecto.
+      const toleranceDegrees = OFF_ROUTE_METERS / 111320;
+
+      // Devuelve TRUE si estás "sobre" la línea (con tolerancia). Nosotros queremos lo contrario.
+      const onEdge = google.maps.geometry.poly.isLocationOnEdge(
+      userLatLng,
+      routeLine,
+      toleranceDegrees
+      );
+
+      return !onEdge;
     }
 
     async function calcularRuta(silencioso) {
@@ -334,12 +358,14 @@ route.legs.forEach(leg => {
 
   <!-- IMPORTANTE: libraries=places para Autocomplete -->
 <script
-  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDpS3k1OJAASoGL1IRb9LjKW6gjaHe5fyw&callback=initMap&v=weekly&libraries=places"
+  src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDpS3k1OJAASoGL1IRb9LjKW6gjaHe5fyw&callback=initMap&v=weekly&libraries=places,geometry"
+  defer
   defer
 ></script>
 
 </body>
 </html>
+
 
 
 

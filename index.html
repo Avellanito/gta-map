@@ -119,7 +119,10 @@
         fields: ["geometry", "name", "formatted_address"]
         // componentRestrictions: { country: "es" }
       });
-
+if (!google.maps.places) {
+  setEstado("Places no cargó (sigue funcionando sin sugerencias)");
+  return; // sin autocompletar, pero el resto sigue
+}
       autocomplete.addListener("place_changed", () => {
         const place = autocomplete.getPlace();
         if (place?.geometry?.location) {
@@ -317,6 +320,7 @@
 
 </body>
 </html>
+
 
 
 

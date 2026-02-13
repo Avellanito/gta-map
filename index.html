@@ -11,188 +11,142 @@
       z-index: 10; width: min(720px, 92vw);
       display: flex; gap: 8px; align-items: center;
       background: rgba(255,255,255,0.94);
-      border-radius: 12px; padding: 10px 12px; box-shadow: 0 8px 30px rgba(0,0,0,0.12);
-      backdrop-filter: blur(6px);
+      padding: 10px; border-radius: 14px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.25);
+    }
+    .bar input{
+      flex: 1; padding: 10px 12px; font-size: 16px;
+      border-radius: 10px; border: 1px solid #cfcfcf; outline: none;
     }
     .bar button{
-      border: 0; background: #111; color: #fff; padding: 10px 12px; border-radius: 10px;
-      cursor: pointer; font-weight: 600;
+      padding: 10px 14px; font-size: 16px; border-radius: 10px;
+      border: none; background: #111; color: #fff; cursor: pointer;
+      white-space: nowrap;
     }
-    .bar button.secondary{ background:#e9e9e9; color:#111; }
-    .bar .status{ flex: 1; font-size: 14px; color:#222; }
-    .toast{
-      position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
-      background: rgba(17,17,17,0.92); color:#fff; padding: 10px 14px; border-radius: 999px;
-      z-index: 10; font-size: 13px; display:none;
+    .chip{
+      font-size: 12px; padding: 6px 10px; border-radius: 999px;
+      background: rgba(0,0,0,0.06); color: #111; white-space: nowrap;
     }
   </style>
 </head>
+
 <body>
   <div class="bar">
-    <div class="status" id="status">Cargando mapa…</div>
-    <button class="secondary" id="btnFollow">Seguir</button>
-    <button id="btnStop">Stop</button>
+    <input id="destino" type="text" placeholder="Destino (ej: Plaza España, Madrid)" />
+    <button id="btnIr" type="button">Ir</button>
+    <button id="btnCentrar" type="button">Centrar</button>
+    <span class="chip" id="estado">Listo</span>
   </div>
-  <div class="toast" id="toast"></div>
+
   <div id="map"></div>
 
   <script>
-    let map;
-    let userMarker;
-    let destMarker;
-    let routeLine;
-    let routeOutline;
-    let watchId = null;
-    let navigating = false;
-    let currentDestination = null;
-    let routeRequestInFlight = false;
-    let lastUserLatLng = null;
-
+    // ==== CONFIG ====
+    const MAP_ID = "818f2355ad2d42eff8904298";
     const DEFAULT_CENTER = { lat: 40.4168, lng: -3.7038 };
 
     const OFF_ROUTE_METERS = 45;
     const OFF_ROUTE_MIN_SECONDS = 10;
     let lastOffRouteCheckMs = 0;
-    let offRouteHits = 0;
-    const OFF_ROUTE_HITS_REQUIRED = 2; // nº de checks seguidos fuera de ruta para recalcular
 
-    const NAV_ZOOM = 17;
+    const NAV_ZOOM = 16;
     let followMe = true;
 
-    const LONG_PRESS_MS = 500;
-    let pressTimer = null;
-    let pressLatLng = null;
+    const LONG_PRESS_MS = 600;
 
-    function toast(msg, ms=1400){
-      const t = document.getElementById("toast");
-      t.textContent = msg;
-      t.style.display = "block";
-      clearTimeout(toast._tm);
-      toast._tm = setTimeout(()=> t.style.display="none", ms);
+    // ==== STATE ====
+    let map, directionsService, autocomplete;
+    let overlay = null;
+
+    let watchId = null;
+    let lastUserLatLng = null;
+    let userMarker = null;
+
+    let navigating = false;
+    let currentDestination = null;
+    let selectedPlaceLatLng = null;
+
+    let routeRequestInFlight = false;
+    let routeOutline = null;
+    let routeLine = null;
+
+    let longPressTimer = null;
+    let pinMarker = null;
+
+    function setEstado(txt) {
+      const el = document.getElementById("estado");
+      if (el) el.textContent = txt;
     }
 
-    function setEstado(txt){
-      document.getElementById("status").textContent = txt;
-    }
+    function initMap() {
+      map = new google.maps.Map(document.getElementById("map"), {
+        heading: 0,
+        tilt: 45,
+        center: DEFAULT_CENTER,
+        zoom: 13,
+        mapId: MAP_ID,
+        fullscreenControl: false,
+        mapTypeControl: false,
+        streetViewControl: false
+      });
 
-    function clearRoute(){
-      if (routeLine) routeLine.setMap(null);
-      if (routeOutline) routeOutline.setMap(null);
-      routeLine = null;
-      routeOutline = null;
-    }
+      // Overlay para touch -> LatLng
+      overlay = new google.maps.OverlayView();
+      overlay.onAdd = function(){};
+      overlay.draw = function(){};
+      overlay.setMap(map);
 
-    function setDestination(latLng){
-      currentDestination = latLng;
-      if (!destMarker){
-        destMarker = new google.maps.Marker({
-          position: latLng,
-          map,
-          title: "Destino",
-          icon: {
-            path: google.maps.SymbolPath.BACKWARD_CLOSED_ARROW,
-            scale: 6,
-            fillColor: "#ff3b30",
-            fillOpacity: 1,
-            strokeColor: "#ffffff",
-            strokeWeight: 2
+      // Long press ratón
+      map.addListener("mousedown", (e) => startLongPress(e.latLng));
+      map.addListener("mouseup", cancelLongPress);
+      map.addListener("drag", cancelLongPress);
+      map.addListener("mouseout", cancelLongPress);
+      map.addListener("rightclick", (e) => handlePinnedPoint(e.latLng));
+
+      // Long press móvil
+      const mapDiv = map.getDiv();
+      mapDiv.addEventListener("touchstart", onTouchStart, { passive: true });
+      mapDiv.addEventListener("touchend", cancelLongPress, { passive: true });
+      mapDiv.addEventListener("touchmove", cancelLongPress, { passive: true });
+
+      directionsService = new google.maps.DirectionsService();
+
+      // Autocomplete (si places cargó)
+      if (google.maps.places) {
+        const input = document.getElementById("destino");
+        autocomplete = new google.maps.places.Autocomplete(input, {
+          fields: ["geometry", "name", "formatted_address"]
+        });
+
+        autocomplete.addListener("place_changed", () => {
+          const place = autocomplete.getPlace();
+          if (place?.geometry?.location) {
+            selectedPlaceLatLng = place.geometry.location;
+            setEstado("Destino listo ✅");
+          } else {
+            selectedPlaceLatLng = null;
+            setEstado("Elige un destino de la lista");
           }
         });
       } else {
-        destMarker.setPosition(latLng);
+        setEstado("Places no cargó (sin sugerencias)");
       }
-      toast("Destino marcado");
-      if (lastUserLatLng) {
-        calcularRuta(false);
-      } else {
-        setEstado("Destino listo. Esperando GPS…");
-      }
+
+      document.getElementById("btnIr").addEventListener("click", () => calcularRuta(false));
+      document.getElementById("btnCentrar").addEventListener("click", () => {
+        if (lastUserLatLng) {
+          map.panTo(lastUserLatLng);
+          map.setZoom(NAV_ZOOM);
+        }
+      });
+
+      iniciarSeguimiento();
+      setEstado("Mapa cargado ✅");
     }
+    window.initMap = initMap;
 
-    async function calcularRuta(isRecalc){
-      if (!lastUserLatLng || !currentDestination) return;
-      if (routeRequestInFlight) return;
-      routeRequestInFlight = true;
-
-      setEstado(isRecalc ? "Recalculando ruta…" : "Calculando ruta…");
-
-      try{
-        const dirService = new google.maps.DirectionsService();
-        const res = await dirService.route({
-          origin: lastUserLatLng,
-          destination: currentDestination,
-          travelMode: google.maps.TravelMode.DRIVING
-        });
-
-        const route = res.routes?.[0];
-        if (!route) throw new Error("Sin ruta");
-
-        const path = route.overview_path;
-
-        clearRoute();
-
-        routeOutline = new google.maps.Polyline({
-          path,
-          map,
-          strokeColor: "#800E82",
-          strokeOpacity: 0.25,
-          strokeWeight: 12,
-          zIndex: 1
-        });
-
-        routeLine = new google.maps.Polyline({
-          path,
-          map,
-          strokeColor: "#800E82",
-          strokeOpacity: 1,
-          strokeWeight: 7,
-          zIndex: 2
-        });
-
-        navigating = true;
-        setEstado("Navegando…");
-        if (followMe) map.panTo(lastUserLatLng);
-      } catch(e){
-        console.error(e);
-        setEstado("Error calculando ruta");
-        toast("No pude calcular la ruta");
-      } finally {
-        routeRequestInFlight = false;
-      }
-    }
-
-    // --- PUNTO 2 + 3 (tolerancia mejorada + antirrebote) ---
-    function metersToDegreesLat(m) { return m / 111320; }
-    function metersToDegreesLng(m, latDeg) {
-      return m / (111320 * Math.cos(latDeg * Math.PI / 180));
-    }
-
-    function isOffRoute(userLatLng) {
-      if (!routeLine || !google.maps.geometry?.poly) return false;
-
-      const lat = userLatLng.lat();
-      // Convertimos metros a grados (lat y lon) y usamos el más conservador como tolerancia.
-      const tolDeg = Math.max(
-        metersToDegreesLat(OFF_ROUTE_METERS),
-        metersToDegreesLng(OFF_ROUTE_METERS, lat)
-      );
-
-      const onEdge = google.maps.geometry.poly.isLocationOnEdge(userLatLng, routeLine, tolDeg);
-      return !onEdge;
-    }
-
-    function handleOffRouteCheck(userLatLng) {
-      if (!isOffRoute(userLatLng)) { offRouteHits = 0; return; }
-      offRouteHits++;
-      if (offRouteHits >= OFF_ROUTE_HITS_REQUIRED) {
-        offRouteHits = 0;
-        calcularRuta(true);
-      }
-    }
-    // --- FIN PUNTO 2 + 3 ---
-
-    function startWatch(){
-      if (!navigator.geolocation) { alert("Geolocalización no disponible"); return; }
+    function iniciarSeguimiento() {
+      if (!navigator.geolocation) { setEstado("Geolocalización no disponible"); return; }
       if (watchId !== null) return;
 
       watchId = navigator.geolocation.watchPosition(
@@ -222,7 +176,7 @@
 
             if (navigating && followMe) {
               map.panTo(latLng);
-              if (map.getZoom() !== NAV_ZOOM) map.setZoom(NAV_ZOOM);
+              if (map.getZoom() < NAV_ZOOM) map.setZoom(NAV_ZOOM);
             }
             if (heading !== null && !isNaN(heading)) {
               map.setHeading(heading);
@@ -231,14 +185,14 @@
 
           setEstado(navigating ? "Navegando…" : "Ubicación OK");
 
-          // Recalcular SOLO si te sales de la ruta (con antirrebote)
+          // Recalcular SOLO si te sales de la ruta
           if (navigating && currentDestination && routeLine && !routeRequestInFlight) {
             const now = Date.now();
             const secondsSince = (now - lastOffRouteCheckMs) / 1000;
 
             if (secondsSince >= OFF_ROUTE_MIN_SECONDS) {
               lastOffRouteCheckMs = now;
-              handleOffRouteCheck(latLng);
+              if (isOffRoute(latLng)) calcularRuta(true);
             }
           }
         },
@@ -247,88 +201,154 @@
           setEstado("Activa ubicación (GPS)");
           alert("Necesito permiso de ubicación.");
         },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 800,
-          timeout: 12000
-        }
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 }
       );
     }
 
-    function stopNav(){
-      navigating = false;
-      currentDestination = null;
-      offRouteHits = 0;
-      clearRoute();
-      if (destMarker) { destMarker.setMap(null); destMarker = null; }
-      setEstado("Parado");
-      toast("Navegación detenida");
+    function limpiarRuta() {
+      if (routeOutline) routeOutline.setMap(null);
+      if (routeLine) routeLine.setMap(null);
+      routeOutline = null;
+      routeLine = null;
     }
 
-    function setupLongPress(){
-      map.addListener("mousedown", (e) => {
-        pressLatLng = e.latLng;
-        pressTimer = setTimeout(() => {
-          if (pressLatLng) setDestination(pressLatLng);
-        }, LONG_PRESS_MS);
-      });
-      map.addListener("mouseup", () => {
-        if (pressTimer) clearTimeout(pressTimer);
-        pressTimer = null;
-        pressLatLng = null;
-      });
-      map.addListener("drag", () => {
-        if (pressTimer) clearTimeout(pressTimer);
-        pressTimer = null;
-      });
-
-      // Touch
-      map.addListener("touchstart", (e) => {
-        pressLatLng = e.latLng;
-        pressTimer = setTimeout(() => {
-          if (pressLatLng) setDestination(pressLatLng);
-        }, LONG_PRESS_MS);
-      });
-      map.addListener("touchend", () => {
-        if (pressTimer) clearTimeout(pressTimer);
-        pressTimer = null;
-        pressLatLng = null;
-      });
+    function distanceMeters(a, b) {
+      const R = 6371000;
+      const lat1 = a.lat() * Math.PI / 180;
+      const lat2 = b.lat() * Math.PI / 180;
+      const dLat = lat2 - lat1;
+      const dLng = (b.lng() - a.lng()) * Math.PI / 180;
+      const s1 = Math.sin(dLat / 2);
+      const s2 = Math.sin(dLng / 2);
+      const h = s1*s1 + Math.cos(lat1) * Math.cos(lat2) * s2*s2;
+      return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
     }
 
-    function initUI(){
-      document.getElementById("btnFollow").addEventListener("click", () => {
-        followMe = !followMe;
-        document.getElementById("btnFollow").textContent = followMe ? "Seguir" : "Libre";
-        toast(followMe ? "Cámara siguiendo" : "Cámara libre");
-      });
-      document.getElementById("btnStop").addEventListener("click", stopNav);
-
-      // Si el usuario arrastra el mapa, desactivamos follow
-      map.addListener("dragstart", () => {
-        followMe = false;
-        document.getElementById("btnFollow").textContent = "Libre";
-      });
+    function isOffRoute(userLatLng) {
+      if (!routeLine || !google.maps.geometry?.poly) return false;
+      const toleranceDegrees = OFF_ROUTE_METERS / 111320;
+      const onEdge = google.maps.geometry.poly.isLocationOnEdge(userLatLng, routeLine, toleranceDegrees);
+      return !onEdge;
     }
 
-    async function initMap(){
-      setEstado("Cargando mapa…");
-      map = new google.maps.Map(document.getElementById("map"), {
-        center: DEFAULT_CENTER,
-        zoom: 14,
-        mapId: "YOUR_MAP_ID_HERE",
-        disableDefaultUI: true,
-        heading: 0,
-        tilt: 45
-      });
-
-      setupLongPress();
-      initUI();
-      startWatch();
-      setEstado("Mantén pulsado para marcar destino");
+    function onTouchStart(ev) {
+      if (!ev.touches || ev.touches.length !== 1) return;
+      const latLng = touchToLatLng(ev.touches[0]);
+      if (latLng) startLongPress(latLng);
     }
 
-    window.initMap = initMap;
+    function startLongPress(latLng) {
+      cancelLongPress();
+      longPressTimer = setTimeout(() => handlePinnedPoint(latLng), LONG_PRESS_MS);
+    }
+
+    function cancelLongPress() {
+      if (longPressTimer) {
+        clearTimeout(longPressTimer);
+        longPressTimer = null;
+      }
+    }
+
+    function touchToLatLng(touch) {
+      if (!overlay) return null;
+      const proj = overlay.getProjection && overlay.getProjection();
+      if (!proj) return null;
+
+      const rect = map.getDiv().getBoundingClientRect();
+      const x = touch.clientX - rect.left;
+      const y = touch.clientY - rect.top;
+
+      return proj.fromContainerPixelToLatLng(new google.maps.Point(x, y));
+    }
+
+    function handlePinnedPoint(latLng) {
+      cancelLongPress();
+
+      selectedPlaceLatLng = latLng;
+      currentDestination = latLng;
+      navigating = true;
+
+      if (!pinMarker) {
+        pinMarker = new google.maps.Marker({ position: latLng, map, title: "Destino" });
+      } else {
+        pinMarker.setPosition(latLng);
+      }
+
+      const inp = document.getElementById("destino");
+      if (inp) inp.value = `Punto: ${latLng.lat().toFixed(5)}, ${latLng.lng().toFixed(5)}`;
+
+      calcularRuta(false);
+    }
+
+    async function calcularRuta(silencioso) {
+      if (!lastUserLatLng) {
+        if (!silencioso) alert("Aún no tengo tu ubicación.");
+        return;
+      }
+
+      const destinoInput = document.getElementById("destino").value.trim();
+      if (!destinoInput && !selectedPlaceLatLng) {
+        if (!silencioso) alert("Escribe un destino primero 🙂");
+        return;
+      }
+
+      currentDestination = selectedPlaceLatLng ? selectedPlaceLatLng : destinoInput;
+      navigating = true;
+
+      if (routeRequestInFlight) return;
+      routeRequestInFlight = true;
+
+      try {
+        const res = await directionsService.route({
+          origin: lastUserLatLng,
+          destination: currentDestination,
+          travelMode: google.maps.TravelMode.DRIVING
+        });
+
+        const route = res.routes?.[0];
+        if (!route) throw new Error("No route");
+
+        // Path detallado pegado a carretera
+        const path = [];
+        route.legs.forEach(leg => leg.steps.forEach(step => step.path.forEach(p => path.push(p))));
+
+        if (!path.length) throw new Error("Empty path");
+
+        limpiarRuta();
+
+        // Borde
+        routeOutline = new google.maps.Polyline({
+          path, map,
+          strokeColor: "#000000",
+          strokeOpacity: 1,
+          strokeWeight: 9,
+          zIndex: 1
+        });
+
+        // Línea morada
+        routeLine = new google.maps.Polyline({
+          path, map,
+          strokeColor: "#800E82",
+          strokeOpacity: 1,
+          strokeWeight: 5,
+          zIndex: 2
+        });
+
+        if (!silencioso) {
+          const bounds = new google.maps.LatLngBounds();
+          path.forEach(p => bounds.extend(p));
+          map.fitBounds(bounds);
+        }
+
+        setEstado("Ruta lista 🛣️");
+      } catch (err) {
+        console.error(err);
+        setEstado("Error ruta");
+        if (!silencioso) alert("No pude calcular la ruta.");
+      } finally {
+        routeRequestInFlight = false;
+      }
+    }
   </script>
   <!-- IMPORTANTE: libraries=places para Autocomplete -->
 <script
@@ -338,6 +358,7 @@
 
 </body>
 </html>
+
 
 
 
